@@ -1,0 +1,151 @@
+---
+title: "Trachoma elimination data processing"
+subtitle: "Read and format ECoMiD and dengue surveillance serology data"
+author: "Ben Arnold ben.arnold@ucsf.edu"
+date: "updated: `r Sys.time()`"
+format:
+  html:
+    
+    toc: true
+    embed-resources: true
+    code-fold: true
+    link-external-newwindow: true
+---
+
+# Preamble
+
+```{r preamble}
+library(here)
+here()
+#----------------------------
+# source the config file
+#----------------------------
+source(here("R","0-config.R"))
+```
+
+# Load and process ECoMiD cohort data
+```{r load ecomid antibody data}
+#-------------------------------
+# load the formatted MBA data
+# for EcoMID, created by
+# 0-all_sero_results_dataclean.Rmd
+#
+# load the child visit dataset
+# to get precise ages at each visit
+#
+# data are in long format
+#-------------------------------
+d <- read_rds(here("../../data/serology/final/ecomid_serology_datasets","ecomid_sero_antigen_seropos_long_2025-12-18.rds"))
+
+# restrict to Pgp3
+d2 <- d %>%
+  filter(antigen %in% c("pgp3"))
+
+
+#-------------------------------
+# load child visit data for
+# exact dates at age of DBS collection
+#-------------------------------
+dvisit <- read_rds(file=here("../../data/ecomid-field/final","ecomid_child_visit_info_2025-09-10.rds"))
+
+#-------------------------------
+# join visit ages to serology
+# data and create a final age
+# variable
+#-------------------------------
+d3 <- d2 %>%
+  left_join(dvisit, join_by("community","community_name","childid","timepoint"), relationship = "many-to-one") %>%
+  mutate(age_days = case_when(
+    !is.na(agedays_dbs) ~ agedays_dbs,
+    is.na(agedays_dbs) & !is.na(agedays_stool) ~ agedays_stool,
+    is.na(agedays_dbs) & is.na(agedays_stool) ~ agedays_svy,
+    TRUE ~ NA
+  ),
+    # there are 14 children with visits that don't appear in the childvisit data, 
+    # which seems like a data processing error / gap
+    # for them, assume their age is equal to their target visit age
+    # need to check!
+    agedays = ifelse(is.na(age_days), timepoint*30.4368, age_days), 
+  age_months = agedays/30.4,
+  age_years = agedays/365.25,
+  # add study identifier for appending with dengue surveillance data
+  study = "ecomid",
+  # add year of data collection for appending with dengue surveillance data
+  year = year(visitdate_svy)
+           )
+```
+
+# Load and process Dengue surveillance data
+```{r load dengue antibody data}
+#-------------------------------
+# load the formatted MBA data
+# for EcoMID, created by
+# 0-all_sero_results_dataclean.Rmd
+#
+# data are in long format
+#-------------------------------
+den <- read_rds(here("../../data/serology/final/dengue_serology_datasets","dengue_sero_antigen_seropos_long_2025-12-18.rds"))
+
+# restrict to pgp3
+# rename age variable to be consistent with ECoMiD
+# rename studyid variable to childid for consistency with ECoMiD
+den2 <- den %>%
+  filter(antigen %in% c("pgp3")) %>%
+  rename(age_years = age) %>%
+  mutate(childid = as.character(studyid))
+
+# summarize the number of measurements for each child in the dengue surveillance data
+dim(den2)
+# 1560 samples
+# 602 children measured twice, 356 children measured once
+table(table(den2$childid))
+```
+
+# Append datasets
+```{r append datasets}
+#-------------------------------
+# append the Ecomid and
+# dengue data into a single
+# file. 
+#-------------------------------
+d4 <- bind_rows(d3, den2)
+
+
+#-------------------------------
+
+# create an integer age in years
+# completed for summary of
+# prevalence by age in years 
+# completed
+#
+# create community_type var
+#
+# select relevant variables
+#-------------------------------
+d5 <- d4 %>%
+  mutate(agey = floor(age_years),
+         community_type = ifelse(community_name %in% c("Esmeraldas","Borbon"),"Esmeraldas and Borbon","Rural Villages")
+  ) %>%
+  select(study,community_type,community_name,childid,sampleid,timepoint,year,agey,age_years,pathogen,pathogen_lab,antigen,antigen_lab,mfi,log10mfi,mficut,mficut_desc,seropos) 
+
+```
+
+# Summarize the data
+```{r summarize the data}
+str(d5)
+skim(d5)
+
+```
+
+# Save analysis data
+```{r save analysis data}
+write_rds(d5, file = here("data","ecuador_trachoma_elimination_data.rds"))
+write_csv(d5, file = here("data","ecuador_trachoma_elimination_data.csv"))
+```
+
+# Session Info
+```{r session info}
+sessionInfo()
+```
+
+

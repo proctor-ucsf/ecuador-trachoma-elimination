@@ -1,0 +1,448 @@
+---
+title: "10-ecomid_map"
+author: "Nikolina Walas nikolina.walas@ucsf.edu"
+date: "updated: `r Sys.time()`"
+format:
+  html:
+    self-contained: true
+    toc: true
+    embed-resources: true
+    code-fold: true
+    link-external-newwindow: true
+execute: 
+  echo: true
+  warning: false
+  message: false
+---
+
+### File Overview
+
+This file generates the map used in the ecomid trachoma elimination paper. 
+
+
+### Read in files
+
+```{r}
+#| label: preamble
+#| message: FALSE
+#| 
+library(here)
+here()
+#----------------------------
+# source the config file
+#----------------------------
+source(here("R","0-config.R"))
+```
+
+# Load geodata
+
+```{r}
+# download streetmaps data
+#| label: load administrative boundaries
+
+d_adm0 <- st_read(here("data/geodata/ecu_adm_2024","ecu_adm_adm0_2024.shp"))
+
+d_adm1 <- st_read(here("data/geodata/ecu_adm_2024","ecu_adm_adm1_2024.shp"))
+
+d_adm <- st_read(here("data/geodata/ecu_adm_2024","ecu_adm_adm2_2024.shp"))
+
+# Filter to Esmeraldas province
+d_adm2 <- d_adm %>%
+  filter(ADM1_ES == "Esmeraldas")
+```
+
+```{r}
+#| label: load community points
+#----------------------------
+# load community lon/lat
+# note: latitutde and longitude
+# are backwards!  fix
+#----------------------------
+dgps <- read_csv(here("../../data/geospatial","ECoMiD_communities_GPS.csv")) %>%
+  rename(lon = Lat, lat = Lon)
+
+#---------------------------
+# create categorization for community types; add in Santa Marìa
+#---------------------------
+# Add Santa Maria: coordinates are taken from google earth (https://www.google.com/maps/search/santa+maria,+rio+cayapas/@0.8534078,-78.9825608,4040m/data=!3m1!1e3!5m1!1e1?entry=ttu&g_ep=EgoyMDI2MDEwNi4wIKXMDSoKLDEwMDc5MjA3M0gBUAM%3D)
+df<-data.frame("Santa Maria","-78.96872", "0.8561", "NA")
+names(df)<-c("Name","lon", "lat", "Urbanicity")
+df$lat <- as.numeric(df$lat)
+df$lon <- as.numeric(df$lon)
+
+dgps <- rbind(dgps, df)
+
+dgps <- dgps %>% 
+  
+  mutate(study = case_when(Name == "Borbon" | 
+                                            Name == "Maldonado" |
+                                            Name == "Timbire" |
+                                            Name == "Colon Eloy" |
+                                            Name == "Santo Domingo" ~ "ECoMiD & arbovirus surveillance", 
+                                          Name == "Esmeraldas" | 
+                                            Name == "Colon de Onzole" | 
+                                            Name == "Zancudo" |
+                                            Name == "San Francisco" |
+                                            Name == "Selva Alegre"~ "ECoMiD only", 
+                                          Name == "Santa Maria" ~ "Arbovirus surveillance only"
+                                          ))
+
+#----------------------------
+# create sf object
+#----------------------------
+dgps_sf <- dgps %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+# add color code here for map 
+dgps_sf <- dgps_sf %>%
+  mutate(point_fill = case_when(
+    study == "ECoMiD only" ~ "orange",
+    study == "ECoMiD & arbovirus surveillance" ~ "plum1",
+    study == "Arbovirus surveillance only" ~ "green3"
+  ),
+  point_color = case_when(
+    study == "ECoMiD only" ~ "red",
+    study == "ECoMiD & arbovirus surveillance" ~ "purple4",
+    study == "Arbovirus surveillance only" ~ "darkgreen"
+  ))
+
+```
+
+```{r}
+#| label: load river polygon
+#| 
+d_riv <- st_read(here("data/geodata","hotosm_ecu_waterways_lines_shp"))
+d_riv2 <- d_riv %>%
+  st_intersection(d_adm2)
+
+# Get roads
+ext <- st_as_sfc(
+  st_bbox(
+    c(
+      xmin = -80,
+      xmax = -78.7,
+      ymin = 0.6,
+      ymax = 1.5
+    ),
+    crs = 4326
+  )
+)
+st_crs(ext)
+
+
+roads <- opq(ext) |> add_osm_feature(key = "highway", value = c("motorway", "trunk", 
+                                                                "primary", "secondary", 
+                                                                "tertiary")) |> 
+  osmdata_sf()
+
+roads_sf <- roads$osm_lines
+
+```
+
+
+```{r}
+# Get colombia polygon
+sa <- ne_countries(
+  continent = "South America",
+  scale = "medium",
+  returnclass = "sf"
+)
+
+# set projection 
+sa_sf <- sa  %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+```
+
+## Plot map of communities
+
+```{r}
+###-----------------------------------###
+map <- ggplot() +  
+  geom_sf(data = sa_sf %>% filter(sovereignt != "Ecuador"), 
+          color = "black", fill = "lightgrey") +  
+  geom_sf(data=d_adm1 %>% filter(ADM1_ES == "Esmeraldas"),color="black", fill="beige") +
+  geom_sf(data=d_adm1 %>% filter(ADM1_ES == "Esmeraldas"),color="black", fill="beige") +
+  geom_sf(data = roads_sf, aes(color = "Road"), linewidth = 0.35) +
+  geom_sf(data = d_riv2, aes(color = "River"), linewidth = 0.30, key_glyph = "path") + # so that it is not polygon data in the legend  
+  # add rural communities
+  geom_segment( #Esmeraldas 
+  aes(
+    x = dgps$lon[dgps$Name=="Esmeraldas"],
+    y = dgps$lat[dgps$Name=="Esmeraldas"],
+    xend = dgps$lon[dgps$Name=="Esmeraldas"] + 0.05,
+    yend = dgps$lat[dgps$Name=="Esmeraldas"] + 0.075
+  ),
+  color = "black"
+) + 
+  geom_segment( # Rural Road
+  aes(
+    x = dgps$lon[dgps$Name=="Colon Eloy"],
+    y = dgps$lat[dgps$Name=="Colon Eloy"],
+    xend = -78.8,
+    yend = 1.15
+  ),
+  color = "black"
+) +
+  geom_segment( # Rural Road
+  aes(
+    x = dgps$lon[dgps$Name=="Timbire"],
+    y = dgps$lat[dgps$Name=="Timbire"],
+    xend = -78.8,
+    yend = 1.15
+  ),
+  color = "black"
+) +
+  geom_segment( # Rural Road
+  aes(
+    x = dgps$lon[dgps$Name=="Maldonado"],
+    y = dgps$lat[dgps$Name=="Maldonado"],
+    xend = -78.8,
+    yend = 1.15
+  ),
+  color = "black"
+) +
+  geom_segment( # Rural Road
+  aes(
+    x = dgps$lon[dgps$Name=="Selva Alegre"],
+    y = dgps$lat[dgps$Name=="Selva Alegre"],
+    xend = -78.8,
+    yend = 1.15
+  ),
+  color = "black"
+) + 
+  geom_segment( # Rural River
+  aes(
+    x = dgps$lon[dgps$Name=="Zancudo"],
+    y = dgps$lat[dgps$Name=="Zancudo"],
+    xend = -79.2,
+    yend = 0.6
+  ),
+  color = "black"
+) +
+  geom_segment( # Rural River
+  aes(
+    x = dgps$lon[dgps$Name=="San Francisco"],
+    y = dgps$lat[dgps$Name=="San Francisco"],
+    xend = -79.2,
+    yend = 0.6
+  ),
+  color = "black"
+) +
+  geom_segment( # Rural River
+  aes(
+    x = dgps$lon[dgps$Name=="Colon de Onzole"],
+    y = dgps$lat[dgps$Name=="Colon de Onzole"],
+    xend = -79.2,
+    yend = 0.6
+  ),
+  color = "black"
+) +
+  geom_segment( # Rural River
+  aes(
+    x = dgps$lon[dgps$Name=="Santa Maria"],
+    y = dgps$lat[dgps$Name=="Santa Maria"],
+    xend = -79.2,
+    yend = 0.6
+  ),
+  color = "black"
+) +
+  geom_segment( # Rural River
+  aes(
+    x = dgps$lon[dgps$Name=="Santo Domingo"],
+    y = dgps$lat[dgps$Name=="Santo Domingo"],
+    xend = -79.2,
+    yend = 0.6
+  ),
+  color = "black"
+) +
+
+geom_segment(
+  aes(
+    x = dgps$lon[dgps$Name=="Borbon"],
+    y = dgps$lat[dgps$Name=="Borbon"],
+    xend = dgps$lon[dgps$Name=="Borbon"] - 0.05,
+    yend = dgps$lat[dgps$Name=="Borbon"] + 0.1
+  ),
+  color = "black"
+) +     # thickness of the outline) 
+  geom_sf(
+  data = dgps_sf,
+  aes(shape = study),
+  fill = dgps_sf$point_fill,
+  color = dgps_sf$point_color,
+  size = 3,
+  stroke = 1
+)  +
+  # Zoom to area of interest
+  coord_sf(
+    xlim = c(-79.8, -78.6),
+    ylim = c(0.5, 1.5),
+    expand = FALSE
+  ) + # add labels for Esmeraldas and Borbon
+  annotate("label",label="Esmeraldas city", 
+           x = dgps$lon[dgps$Name=="Esmeraldas"]+0.05 , 
+           y = dgps$lat[dgps$Name=="Esmeraldas"] +0.075, color = "black", fill= "white")  +
+  annotate("label",label="Borbón", 
+           x = dgps$lon[dgps$Name=="Borbon"]-0.05 , 
+           y = dgps$lat[dgps$Name=="Borbon"]+ 0.1, color = "black", fill = "white") +
+  annotate("label",label="Rural,\nriver accessible", x = -79.2, y = 0.6, color = "black", fill = "white" ) +
+  annotate("label",label="Rural,\nroad accessible", x = -78.8, y = 1.15, color = "black", fill = "white" ) + 
+  labs(x = "Latitude", y = "Longitude",  tag = "B") +  
+  annotation_scale(location = "br", width_hint = 0.2) + 
+  scale_color_manual(
+  name = "Study",
+  values = c("River" = "blue", "Road" = "brown",
+             "ECoMiD only" = "red", "ECoMiD & arbovirus surveillance" = "purple4", 
+             "Arbovirus surveillance only" = "darkgreen")
+) + scale_fill_manual(name = "Study", 
+  values = c("ECoMiD only" = "orange", "ECoMiD & arbovirus surveillance" = "plum1", 
+             "Arbovirus surveillance only" = "green3")
+) + 
+scale_shape_manual(
+  name = "Study",
+  values = c("ECoMiD only" = 21, 
+             "ECoMiD & arbovirus surveillance" = 21, 
+             "Arbovirus surveillance only" =21), 
+  labels = c("ECoMiD only", "ECoMiD & arbovirus surveillance", "Arbovirus surveillance only")
+) + guides(
+  shape = guide_legend(
+    override.aes = list(
+      shape = c(21, 21, 21),
+      size = 3,
+      fill = c("orange", "plum1", "green3"),  # legend fills
+      color = c("red", "purple4", "darkgreen")    # legend outlines
+    )
+  ),
+   # Keep rivers and roads in the legend
+  color = guide_legend(override.aes = list(
+    linetype = c(1,1),
+    size = c(0.35,0.30)
+  )),   # hide color legend
+  fill = "none") +    # hide fill legend) + 
+  theme(panel.background = element_rect(fill = "lightblue"), 
+        panel.grid.major = element_blank(),
+        legend.background = element_blank(),
+  legend.key = element_blank(), 
+  legend.position = c(0.02, 0.98),
+  legend.justification = c(0, 1), 
+  legend.title = element_blank(), 
+  plot.tag = element_text(face = "bold", size = 16))
+
+ggsave("../output/map_basic.png", map, width = 7, height = 5)
+```
+
+# Load data for South America
+```{r}
+#| label: create map of South America 
+# get names of countries
+sa <- ne_countries(
+  continent = "South America",
+  scale = "medium",
+  returnclass = "sf"
+)
+
+# subselect for countries that will be in smaller map view
+sa_sel <- sa %>%
+  filter(name_long %in% c(
+    "Brazil", "Ecuador", "Peru", "Bolivia", "Colombia", "Venezuela"
+  ))
+sa_ecuador <- sa %>%
+  mutate(
+    fill_ecuador = if_else(name_long == "Ecuador", "Ecuador", "Other")
+  )
+esmeraldas_pt <- d_adm1 %>%
+  filter(ADM1_ES == "Esmeraldas") %>%
+  st_point_on_surface()
+
+# add label positions
+label_positions <- tibble::tibble(
+  name = c("Brazil", "Ecuador", "Peru", "Bolivia", "Colombia", "Venezuela"),
+  lon  = c(-68, -78.5, -76, -64, -73, -69),
+  lat  = c(-5, -1.5, -5, -17, 4, 8)
+)
+
+# set map dimensions 
+xlim_reg <- c(-82, -55)
+ylim_reg <- c(-10, 15)
+
+map_overview <- ggplot() +
+  
+  # Countries (Ecuador highlighted)
+  geom_sf(
+    data = sa_ecuador,
+    aes(fill = fill_ecuador),
+    color = "black"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Ecuador" = "grey",
+      "Other"   = "white"
+    ),
+    guide = "none"
+  ) +
+  
+  # Esmeraldas province
+  geom_sf(
+    data = d_adm1 %>% filter(ADM1_ES == "Esmeraldas"),
+    color = "black",
+    fill = "beige"
+  ) +
+  
+  # Esmeraldas label with leader line
+  ggrepel::geom_label_repel(
+    data = esmeraldas_pt,
+    aes(label = "Esmeraldas Province", geometry = geometry),
+    stat = "sf_coordinates",
+    color = "black", 
+    nudge_x = -3,
+    nudge_y = 2,
+    size = 3,
+    fill = "beige",
+    segment.color = "black",
+    segment.size = 0.5,
+    min.segment.length = 0
+  ) +
+  
+  # Country labels
+  geom_text(
+    data = label_positions,
+    aes(x = lon, y = lat, label = name),
+    size = 3,
+    fontface = "bold",
+    color = "black"
+  ) +
+  
+  # Coordinate system
+  coord_sf(
+    crs = 4326,
+    xlim = c(-85, -68),
+    ylim = c(-8, 8)
+  ) +
+  
+  labs(x = "Latitude", y = "Longitude", tag = "A") +
+  annotation_scale(location = "bl", width_hint = 0.2) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.tag = element_text(face = "bold", size = 16)
+  ) +
+  annotate(
+    "rect",
+    xmin = -79.8, xmax = -78.6,
+    ymin = 0.5,  ymax = 1.5,
+    fill = NA,
+    color = "red",
+    linewidth = 0.5
+  )
+
+map_overview
+
+#|label: composite map
+
+comp_map <- map_overview + map + plot_layout(ncol=2,nrow=1)
+comp_map
+
+ggsave("../output/map_composite.png", comp_map, width = 12, height = 6)
+```
+

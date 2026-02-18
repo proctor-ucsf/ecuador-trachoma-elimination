@@ -1,0 +1,948 @@
+---
+title: "ECoMiD trachoma serology analysis"
+subtitle: "Estimate the probability of action needed given the global trachoma serology data"
+author: "Ben Arnold ben.arnold@ucsf.edu,<br> Everlyn Kamau everlyn.kamau@ucsf.edu"
+date: "updated: `r Sys.time()`"
+format:
+  html:
+    
+    toc: true
+    embed-resources: true
+    code-fold: true
+    link-external-newwindow: true
+---
+
+# Summary
+
+This analysis contextualizes the seroconversion rate (SCR) to _Chlamydia trachomatis_ Pgp3 estimated among children in the ECoMiD cohort vis-a-vis serology in well characterized populations. It draws on data contributed by the Global Trachoma Serosurveillance Study Group and made available online through OSF (<https://osf.io/ykjc4/>) and Dryad (<https://datadryad.org/dataset/doi:10.5061/dryad.5qfttdzhx>).  
+
+Below, we use the same data and general approach published by Kamau et al. 2025 in _Nature Communications_ (<https://www.nature.com/articles/s41467-025-60581-z>) to characterize the  probability of public health action needed (vs not needed) according to estimates of the SCR. 
+
+The approach relies on previous data collected from 34 trachoma Evaluation Units (EUs) that were determined by a group of experts to require no further public health action (No action needed) and those that would require further action (Action needed). 
+
+There are two outputs from the analysis:
+
+  1. Given the observed SCR, estimate the probability that the population falls into either `No action needed` or `Action needed` from a public health perspective for trachoma.
+  2. Estimate the probability that the SCR is above (or below) a specific threshold. Below, we estimate the probability it is below 2 per 100 person-years, as a reasonable example since there is no formal threshold for elimination at this time. 
+
+For the Ecuador study, we combine data from the ECoMiD cohort and ongoing arbovirus surveillance to estimate the SCR among measurements collected from children 1-5 years, and its uncertainty, using a catalytic model. We stratified the analysis along the urban-rural gradient after an initial review of seropositivity along the gradient. 
+
+After co-author input, we excluded measurements from Esmeraldas city since no children were sampled from Esmeraldas in the arbovirus surveillance study and so there are no measurements older than 24 months old. Esmeraldas city is qualitatively different from Borbon in terms of potential transmission dynamics so we were hesitant to combine them into a single estimate.
+
+Given an estimate of the SCR, we simulate from the log(SCR) estimate and its SE to approximate the observed likelihood.  Given the likelihood of the data, we then estimate the probability the population falls into each trachoma public health action category (Action not needed, Action needed). For a given SCR threshold, we then estimated the probability that the SCR falls below or above the threshold. 
+
+We show that given the observed data in Ecuador and global distributions of the Pgp3 SCR, there is a high probability of no action needed in Borbon (68%). Conversely, given the estimated SCR in rural communities is 5.7 per 100 person-years, there is a 0.99 probability that public health action is needed based on comparison with global SCR distributions. 
+
+These results could motivate further inquiry into _C. trachomatis_ infection among young children in rural communities of Esmeraldas province, Ecuador.
+
+
+# Preamble
+
+```{r preamble, message = FALSE}
+#-----------------------------------------
+# Source project config file
+# and project functions
+#-----------------------------------------
+library(here)
+source(here("R/0-config.R"))
+
+```
+
+# Download global trachoma serology dataset
+
+```{r download global trachoma serology dataset}
+
+#-----------------------------------------
+# This public dataset is available
+# through the Open Science Framwork
+# use the OSF API through the osfr
+# package to download it into the 
+# local /data directory
+#-----------------------------------------
+#-----------------------------------------
+# download the individual level dataset (V4)
+# trachoma_serology_public_data_indiv_v4.rds
+# https://osf.io/9p3jn
+#-----------------------------------------
+# ind_osfinfo <- osf_retrieve_file("9p3jn") %>%
+#   osf_download(path=here("data"), conflicts = "overwrite", progress = TRUE)
+# 
+# globaltrach1 <- read_rds(file=ind_osfinfo$local_path) %>%
+#   rename(cluster_id = cluster_id_public,
+#          household_id = household_id_public,
+#          individual_id = individual_id_public) 
+
+#-----------------------------------------
+# Perhaps simpler, download the saved
+# posterior distributions for each EU in
+# the original analysis
+# https://osf.io/5pu8m
+#-----------------------------------------
+scrpost_osfinfo <- osf_retrieve_file("5pu8m") %>%
+  osf_download(path=here("data"), conflicts = "overwrite", progress = TRUE)
+
+scr_posterior <- read_rds(file=scrpost_osfinfo$local_path) %>%
+  rename(eu_name = eu) %>%
+  mutate(scr = as.numeric(scr)*100) # format SCR per 100 person-years and to numeric
+
+# if already downloaded, read in the saved dataset
+# scr_posterior <- read_rds(file=here("data","MCMC_posterior_samples_scr.rds")) %>%
+#   rename(eu_name = eu) %>%
+#   mutate(scr = as.numeric(scr)*100) # format SCR per 100 person-years and to numeric
+
+# create trachoma action categories using the same list as Kamau et al 2025
+# from: https://github.com/ekamau/characterizing_trachoma_elimination_serology/blob/main/R/0-functions.R#L18C1-L43
+# 2 main categories - programmatic action:
+make_trachoma_cat <- function(df) {
+  
+  eus_wo_PCR <- c("Sudan-El Seraif-2019", "Sudan-Saraf Omrah-2019", "Sudan-Kotom-2019",
+                  "Malaysia-Sabah-2015",  "Peru-Amazonia-2020", "Papua New Guinea-Mendi-2015", 
+                "Papua New Guinea-Daru-2015", "Papua New Guinea-West New Britain-2015")
+  
+  df <- df %>% 
+    mutate(trachoma_cat = case_when(startsWith(as.character(eu_name), "Ghana") ~ "Action not needed",
+                                    eu_name %in% c("Ethiopia-Alefa-2017","Niger-MORDOR/Dosso-2015","Ethiopia-Woreta Town-2017",
+                                              "Togo-Anie-2017","Togo-Keran-2017","Morocco-Agdaz-2019","Morocco-Boumalne Dades-2019",
+                                              "Gambia-River Regions-2014","Ethiopia-Metema-2021","Ethiopia-Woreta Town-2021",
+                                              "Malawi-DHO Nkwazi-2014","Malawi-Kasisi/DHO-2014","Malawi-Luzi Kochilira-2014",
+                                              "Malawi-Chapananga-2014") ~ "Action not needed",
+                                    eu_name %in% c("Ethiopia-Andabet-2017","Ethiopia-Goncha-2019","Niger-PRET/Matameye-2013",
+                                              "Ethiopia-Ebinat-2019","Ethiopia-TAITU/Wag Hemra-2018","Ethiopia-WUHA/Wag Hemra-2016",
+                                              "Kiribati-Tarawa-2016","Kiribati-Kiritimati-2016","Tanzania-Kongwa-2018",
+                                              "Tanzania-Kongwa-2013","Solomon Islands-Temotu/Rennel/Bellona-2015") ~ "Action needed",
+                                    eu_name %in% eus_wo_PCR ~ "Unclassified",
+                                    TRUE ~ as.character("Unclassified")),
+           trachoma_cat = factor(trachoma_cat, levels = c("Action needed","Action not needed","Unclassified"))
+    )
+  
+  return(df)
+}
+
+# globaltrach2 <- make_trachoma_cat(globaltrach1)
+scr_posterior2 <- make_trachoma_cat(scr_posterior)
+
+```
+
+## Plot EU distributions
+
+```{r plot EU level distributions, eval=FALSE}
+#-----------------------------------------
+# Examine EU-specific distributions
+# (Not used, just for a quick visual inspection)
+#-----------------------------------------
+plot_eu_dists <- ggplot(data=scr_posterior2 %>% filter(trachoma_cat == "Action needed"), aes(x=scr, fill=trachoma_cat)) + 
+  facet_wrap(.~eu_name, ncol=1)+
+  geom_histogram(bins=40) +
+  scale_x_continuous(breaks=seq(0,30,by=2)) +
+  theme_minimal()
+
+plot_eu_dists
+
+```
+
+
+## Pool EU distributions by trachoma category
+
+Estimated likelihoods of the SCR by trachoma category. This recreates Kamau et al. 2025, Figure 2B.
+
+```{r pool densities}
+#-----------------------------------------
+# pool the densities over the EUs
+# by trachoma transmission categories
+# for each density, use a fixed range
+# of 1000 bins from 0 to 30 SCR per 100 person-years
+#-----------------------------------------
+dist_noaction <- density(scr_posterior2$scr[scr_posterior2$trachoma_cat == "Action not needed"], 
+                         n=1024, from=0, to=30)
+
+dist_action <- density(scr_posterior2$scr[scr_posterior2$trachoma_cat == "Action needed"], 
+                         n=1024, from=0, to=30)
+
+
+#-----------------------------------------
+# bind into a data frame and normalize
+# the densities so each sums to 1
+#-----------------------------------------
+d_pool <- bind_rows(
+  data.frame(scr=dist_noaction$x, den=dist_noaction$y, trachoma_cat = "Action not needed"),
+  data.frame(scr=dist_action$x, den=dist_action$y, trachoma_cat = "Action needed")
+) %>%
+  # normalize all of the densities so they sum to 1
+  group_by(trachoma_cat) %>%
+  arrange(trachoma_cat, scr) %>%
+  mutate(sum_den = sum(den),
+         den = den/sum_den
+         ) 
+```
+
+```{r plot pooled densities}
+#-----------------------------------------
+# plot the pooled densities by SCR
+#-----------------------------------------
+# pcols <- c("#A42820", "#F98400", "cadetblue","gray95") 
+# pcols <- c("#A42820", "cadetblue") 
+pcols <- cbpal[c(7,6)]
+
+plot_pool <- ggplot(data = d_pool, aes(x = scr, y=den, color=trachoma_cat)) +
+  geom_line() +
+  scale_color_manual(values = pcols[1:3]) +
+  scale_x_continuous(breaks=seq(0,26,by=2)) +
+  labs(x="SCR per 100 person-years", y = "Probability density", title="Estimated likelihoods, P(SCR|category)")  +
+  coord_cartesian(xlim=c(0,26)) +
+  theme_minimal()
+  
+plot_pool
+```
+
+
+## Estimate point-wise probability of each category
+
+This converts the above densities into probability of being in each category for a given SCR. This will be used to multiply with a prior $P(category)$, allowing for a continuously varying posterior probability of being in each category given an SCR:
+
+$P(category | SCR) = P(SCR|category)P(category)$
+
+The initial plots below show the functions with an uninformative prior P(category) = 1/2 for each. 
+
+Little is known about trachoma in Esmeraldas province, Ecuador.  So this could be considered akin to a baseline survey.  Following Kamau et al. 2025
+
+```{r estimate pointwise probability of each category uninformative prior}
+#-----------------------------------------
+# calculate point-wise relative probability  
+# of being in each group at every value
+# of SCR based on the density distributions
+#-----------------------------------------
+d_prob <- d_pool %>%
+  group_by(scr) %>%
+  mutate(prob_cat = den/sum(den)) %>%
+  ungroup()
+
+```
+
+
+```{r plot probabilities uninformative prior, message=FALSE}
+
+#-----------------------------------------
+# calculate using an uninformative prior
+# (this step is essentially unnecessary
+#  and should be same as the likelihood)
+#-----------------------------------------
+d_prob1 <- d_prob %>%
+  mutate(
+    prob_prior = case_when(
+      trachoma_cat == "Action not needed" ~ 0.5,
+      trachoma_cat == "Action needed" ~ 0.5
+      ),
+    # estimate the posterior probability
+    prob_post = prob_cat*prob_prior
+  ) %>%
+  # renormalize the posterior probabilities so they sum to 1
+  group_by(scr) %>%
+  mutate(prob_post = prob_post/sum(prob_post)) %>%
+  ungroup()
+
+#-----------------------------------------
+# plot the point-wise probability of
+# each group by SCR
+# uninformative prior (50/50) per Fig 3B
+# of Kamau et al 2025
+#-----------------------------------------
+d_shade_box <- data.frame(trachoma_cat = "Action not needed") %>%
+  mutate(minX = 1.6, 
+         maxX = 3.8,
+         # maxX = 4.4,
+         trachoma_cat = factor(trachoma_cat,levels(d_prob$trachoma_cat))
+         )
+
+plot_prob <- ggplot(data = d_prob1, aes(x = scr, y=prob_cat, color=trachoma_cat)) +
+  # add shade box
+  geom_rect(data=d_shade_box,aes(xmin = minX, xmax = maxX, ymin = 0, ymax = 1), inherit.aes=FALSE, alpha=0.1) +
+  # add category labels
+  annotate("text",x=5.5,y=0.86,label="Action\nneeded",color=pcols[1]) +
+  annotate("text",x=0.5,y=0.86,label="Action\nnot needed",color=pcols[2]) +
+  geom_line() +
+  scale_color_manual(values = pcols)  +
+  scale_x_continuous(breaks=seq(0,8,by=1)) +
+  scale_y_continuous(breaks=seq(0,1,by=0.2)) +
+  labs(x="SCR per 100 person-years", y = "P(category | SCR)", title = "P(category | SCR) = P(SCR|category)P(category)", subtitle="Uninformative prior, P(category) = 0.5") +
+  coord_cartesian(xlim=c(0,6)) +
+  theme_minimal() +
+  theme(
+    legend.position = "none"
+  )
+plot_prob
+```
+
+```{r estimate pointwise probabilities with informative prior, eval=FALSE}
+#-----------------------------------------
+# Informative prior of 80/20, per Fig 3A
+# in Kamau et al 2025
+# ** NOT USED **
+#-----------------------------------------
+d_prob2 <- d_prob %>%
+  mutate(
+    prob_prior = case_when(
+      trachoma_cat == "Action not needed" ~ 0.8,
+      trachoma_cat == "Action needed" ~ 0.2
+      ),
+    # estimate the posterior probability
+    prob_post = prob_cat*prob_prior
+  ) %>%
+  # renormalize the posterior probabilities so they sum to 1
+  group_by(scr) %>%
+  mutate(prob_post = prob_post/sum(prob_post)) %>%
+  ungroup()
+
+#-----------------------------------------
+# plot the point-wise posterior probability of
+# each group by SCR
+#-----------------------------------------
+d_shade_box <- data.frame(trachoma_cat = "Action not needed") %>%
+  mutate(minX = 2.2, 
+         maxX = 4.5,
+         trachoma_cat = factor(trachoma_cat,levels(d_prob$trachoma_cat))
+         )
+plot_informprior <- ggplot(data = d_prob2, aes(x = scr, y=prob_post, color=trachoma_cat)) +
+  # add shade box
+  geom_rect(data=d_shade_box,aes(xmin = minX, xmax = maxX, ymin = 0, ymax = 1), inherit.aes=FALSE, alpha=0.1) +
+  # add category labels
+  annotate("text",x=7.5,y=0.86,label="Action\nneeded",color=pcols[1]) +
+  annotate("text",x=0.5,y=0.86,label="Action\nnot needed",color=pcols[2]) +
+  geom_line() +
+  scale_color_manual(values = pcols)  +
+  scale_x_continuous(breaks=seq(0,10,by=2)) +
+  scale_y_continuous(breaks=seq(0,1,by=0.2)) +
+  labs(x="SCR per 100 person-years", y = "Posterior probability in each category", title = "P(category | SCR) = P(SCR|category)P(category)", subtitle="Priors for P(category) = {0.8, 0.2}") +
+  coord_cartesian(xlim=c(0,8)) +
+  theme_minimal() + 
+  theme(
+    legend.position = "none"
+  )
+plot_informprior
+```
+
+We can then use this function to identify a region of the SCR where we feel confident that no further action is needed, above which we might want further investigation.  For example, at 90% posterior probability of No Action Needed, this corresponds to an SCR of about 1.6.
+
+Similarly the point at which an EU has about >90% chance of requiring further action corresponds to an SCR of 3.8.
+
+
+# Estimate probability of action needed for Ecuador
+
+For a new EU survey, there are (at least) two relevant summaries we can estimate given the above information. 
+
+First, we can estimate the probability that the EU is in each of the trachoma categories based on its estimate of the SCR. So given a new EU survey, we can get a posterior probability that the EU is in each category of No action needed vs Action needed.
+
+Second, if a threshold (x) were chosen based on the results in Figure 2 above, P(category | SCR), we can then estimate the probability that the EU's SCR is ≤ x.  Although there is no formal WHO guideline, there has been discussion of using a range of SCR of <2 for no action needed and >4 for Action needed (with 2-4 being an intermediate range). 
+
+Below, we stratify the analysis by Borbon (commercial center, somewhat urban), and rural communities.   We exclude measurements from children in Esmeraldas because we did not have samples from children older than 24 months. 
+
+## Load and process the Ecuador data
+
+```{r load EcoMID data}
+#-------------------------------
+# load the formatted MBA data
+# for EcoMID, created by
+# 0-all_sero_results_dataclean.Rmd
+#
+# data are in long format
+#-------------------------------
+d <- read_rds(here("data","ecuador_trachoma_elimination_data.rds"))
+  
+# Identify the number of children and samples in Esmeraldas
+# to report exclusion
+table(d$community_name)
+d_nchild_by_community <- d %>% 
+  group_by(community_name,childid) %>% slice(1)
+table(d_nchild_by_community$community_name)
+
+# Filter out Esmeraldas city
+d <- d %>%
+  filter(community_name != "Esmeraldas") %>%
+  mutate(community_type = factor(community_type, levels = c("Rural Villages","Esmeraldas and Borbon"),labels = c("Rural Villages","Borbon")))
+
+table(d$community_type)
+```
+
+
+## Seroprevalence by community
+
+```{r seroprevalence by community}
+#-------------------------------
+# estimate prevalence and 95% CIs. 
+# these are approximate but reasonable
+#-------------------------------
+dprev_comm <- d %>%
+  group_by(community_name) %>%
+  summarize(nmeas = sum(ifelse(!is.na(seropos),1,0)),
+            npos = sum(seropos, na.rm=TRUE), 
+            .groups = "drop") %>%
+  mutate(seroprev = npos/nmeas) %>%
+  rowwise() %>%
+  mutate(seroprev_min95 = binom.test(npos,nmeas)$conf.int[1],
+         seroprev_max95 = binom.test(npos,nmeas)$conf.int[2]
+         )
+
+kbl(dprev_comm %>% arrange(seroprev),caption = "Seroprevalence by community (ages 0-15 years)") %>%
+  kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+```{r plot seroprev by community}
+
+#-------------------------------
+# sort communities by prevalence
+#-------------------------------
+comm_sorted <- dprev_comm$community_name[order(dprev_comm$seroprev)]
+rural_comm_sorted <- comm_sorted[comm_sorted!="Borbon"]
+dprev_comm_plot <- dprev_comm %>%
+  mutate(community_name_plot = factor(community_name, levels = c("Borbon",rural_comm_sorted)),
+         community_type = ifelse(community_name == "Borbon","Borbon","Rural villages"),
+         community_type = factor(community_type, levels = c("Rural villages","Borbon"))
+         )
+         
+plot_seroprev_community <- ggplot(data = dprev_comm_plot, aes(x = community_name_plot, y = seroprev, color = community_type)) +
+  geom_point() + 
+  geom_errorbar(aes(ymin= seroprev_min95, ymax = seroprev_max95), width = 0.2) +
+  scale_color_manual(values = cbpal[c(4,2)]) +
+  scale_y_continuous(breaks = seq(0,0.5,by=0.1), labels = sprintf("%1.0f",seq(0,0.5,by=0.1)*100)) +
+  # scale_x_continuous(breaks = seq(0,16,by=2)) + 
+  labs(x = "Community", y = "Pgp3 IgG Seroprevalence (%)", tag = "A") +
+  coord_cartesian(ylim=c(0,0.5)) + 
+  theme_classic() + 
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+plot_seroprev_community
+```
+
+## Seroprevalence by age
+
+```{r seroprevalence by age in years completed}
+
+# estimate prevalence and 95% CIs. 
+# these are approximate but reasonable
+dprev <- d %>%
+  group_by(agey) %>%
+  summarize(nmeas = sum(ifelse(!is.na(seropos),1,0)),
+            npos = sum(seropos, na.rm=TRUE), 
+            .groups = "drop") %>%
+  mutate(seroprev = npos/nmeas) %>%
+  rowwise() %>%
+  mutate(seroprev_min95 = binom.test(npos,nmeas)$conf.int[1],
+         seroprev_max95 = binom.test(npos,nmeas)$conf.int[2]
+         )
+
+kbl(dprev,caption = "Seroprevalence by age in years completed") %>%
+  kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+```{r plot seroprev by age}
+
+plot_seroprev_age <- ggplot(data = dprev, aes(x = agey, y = seroprev)) +
+  geom_point(color="deepskyblue4") + 
+  geom_errorbar(aes(ymin= seroprev_min95, ymax = seroprev_max95),color="deepskyblue4", width = 0.2) +
+  scale_y_continuous(breaks = seq(0,0.3,by=0.1), labels = sprintf("%1.0f",seq(0,0.3,by=0.1)*100)) +
+  scale_x_continuous(breaks = seq(0,16,by=2)) + 
+  labs(x = "Age, years", y = "Pgp3 IgG Seroprevalence (%)", tag = "A") +
+  coord_cartesian(ylim=c(0,0.3)) + 
+  theme_classic()
+
+plot_seroprev_age
+```
+
+```{r summarize number of samples by age}
+# total number of measurements
+cat("Total number of Pgp3 measurements:",sum(dprev$nmeas))
+
+cat("Total number of unique children:",length(unique(d$childid)))
+
+cat("Total number of unique children ages 1-5:",length(unique(d$childid[d$age_years>=1 & d$age_years<=5])))
+
+cat("Total number of Pgp3 measurements ages 1-5:",length(d$seropos[!is.na(d$seropos) & d$age_years>=1 & d$age_years<=5]))
+
+
+```
+
+```{r fit smooth age seroprev by community}
+#-------------------------------
+# fit loess to smooth over age
+# stratify fits by community
+#-------------------------------
+d_urban <- d %>% filter(community_type == "Borbon")
+d_rural <- d %>% filter(community_type == "Rural Villages")
+fit_urban <- loess(seropos ~ age_years, data=d_urban)
+fit_rural <- loess(seropos ~ age_years, data=d_rural)
+
+pred_ages <- seq(1,14,by=0.1)
+p_loess_urban <- predict(fit_urban, newdata = data.frame(age_years = pred_ages))
+p_loess_rural <- predict(fit_rural, newdata = data.frame(age_years = pred_ages))
+d_loess_fits <- data.frame(community_type = c(rep("Borbon",length(pred_ages)),rep("Rural Villages",length(pred_ages))),
+                           age_years = c(pred_ages,pred_ages),
+                           pred_seroprev = c(p_loess_urban,p_loess_rural)) %>%
+  mutate(community_type = factor(community_type, levels = levels(d$community_type)))
+
+#-------------------------------
+# plot fitted curves
+#-------------------------------
+plot_smooth_prev <- ggplot(data=d_loess_fits, aes(x= age_years, y = pred_seroprev, color = community_type)) + 
+  geom_line() +
+  scale_y_continuous(breaks = seq(0,0.2,by=0.05), labels = sprintf("%1.0f",seq(0,0.2,by=0.05)*100)) +
+  scale_x_continuous(breaks = seq(0,14,by=2)) + 
+  scale_color_manual(values = cbpal[c(4,2)], guide = guide_legend(title = "")) +
+  labs(x = "Age, years", y = "Pgp3 IgG Seroprevalence (%)", tag = "B") +
+  coord_cartesian(ylim=c(0,0.15), xlim=c(0,15)) + 
+  theme_classic() +
+  theme(
+    legend.position = c(0.7,0.2)
+  )
+  
+
+plot_smooth_prev
+
+```
+
+```{r number of samples by age in years completed}
+
+#-------------------------------
+# histogram of number of samples
+# by age in years completed
+#-------------------------------
+plot_hist_age <- ggplot(data = d, aes(x = agey, fill = community_type)) +
+  # geom_histogram(binwidth = 1, fill = "deepskyblue4",color = "gray20", alpha=0.7) + 
+  geom_histogram(binwidth = 1, alpha=1, color = "gray40") + 
+  scale_fill_manual(values = cbpal[c(4,2)], guide = guide_legend(title = "")) +
+  scale_color_manual(values = cbpal[c(4,2)], guide = guide_legend(title = "")) +
+  scale_x_continuous(breaks = seq(0,16,by=2)) +
+  coord_cartesian(xlim=c(0,15)) + 
+  labs(x="Age, years",y = "N samples", tag="C") +
+  theme_classic() +
+  theme(
+    legend.position = c(0.7,0.9)
+  )
+
+plot_hist_age
+
+```
+
+```{r composite age seroprev plot}
+age_seroprev_comp <- plot_seroprev_community  + plot_smooth_prev + plot_hist_age + plot_layout(ncol = 1, heights=c(1,1,1))
+
+ggsave(filename = here("output","ecuador_pgp3_age_serprev.png"),age_seroprev_comp, device = "png", width = 90, height = 240, units = "mm")
+```
+
+
+
+
+## Estimate the SCR for Ecuador data
+
+```{r scr function}
+
+# copied from:
+# https://github.com/ekamau/characterizing_trachoma_elimination_serology/blob/main/R/0-functions.R#L263-L411
+
+#-------------------------------
+# estimate_scr_glm()
+#
+# fit a catalytic model with a single seroconversion rate using a Generalized Linear Model (GLM)
+# this is equivalent to an SIR model
+#
+# vectors serop, agey, and id (if specified) must be the same length!
+#
+# @serop : seropositivity indicator (1=seropos+, 0=seroneg-)
+# @agey  : age in years
+# @id    : ID variable for independent units (individuals or clusters)
+#          if unspecified, assumes 1:length(serop) (individuals)
+# @variance : Variance estimator: "ML", "robust", "bootstrap"
+#             ML: maximum likelihood (the default), assumes i.i.d obs
+#             robust: Huber-White robust SEs, clustered at the level of id
+#             bootstrap: non-parametric bootstrap, resampling ids w/ replacement
+# @nboots    : number of bootstrap replicates, 
+#              default is 100 (use 1000+ for publication-quality CIs)
+# 
+# returns a list with the following objects
+# scr       : ML estimate of the seroconversion rate (SCR)
+# scr_se    : ML estimate of the SCR standard error (NA if using a bootstrap)
+# scr_min95        : lower 95% confidence interval for the SCR
+# scr_max95        : upper 95% confidence interval for the SCR
+# scr_ci_method    : method used to estimate the 95% CI (character) 
+# glm_err_warn_msg : warning message (in the case of a failed fit) (character)
+#-------------------------------
+estimate_scr_glm <- function(serop,agey,id=1:length(serop),
+                    variance="ML",nboots=100,seed=NULL) {
+  
+  # set a seed (if specified)
+  if(!is.null(seed)) {
+    set.seed(seed)
+  }
+  
+  # confirm that serop, agey, and id are all the same length
+  if((length(serop) != length(agey)) | (length(serop) != length(id))) {
+    e <- simpleError(paste0("\n\nThe length of serop (",length(serop),"), agey (",length(agey), "), and id (",length(id),") vectors are not the same.\nCheck to ensure they are the same length."))
+    stop(e)
+  }
+  
+  # create a data frame and restrict
+  # to non-missing observations
+  df  <- data.frame(id,serop,agey) %>%
+    filter(!is.na(serop) & !is.na(agey))
+  
+  # identify the number of unique IDs
+  ids <- unique(df$id)
+  
+  # fit the GLM model
+  glm_fit <- tryCatch(glm(serop~1, offset = log(agey),
+                          data = df,
+                          family = binomial(link = "cloglog")),
+                      error = function(cond){return(cond$message)},
+                      warning = function(cond){return(cond$message)})
+  
+  if(class(glm_fit)[1] == "character") {
+    scr_hat <- NA
+    logscr_se  <- NA
+    scr_min95 <- NA
+    scr_max95 <- NA
+    scr_ci_method <- NA
+    glm_err_warn_msg <- glm_fit
+  } else {
+    # retrieve the SCR and the SE of the log SCR
+    scr_hat <- exp(glm_fit$coefficients)
+    logscr_se <- sqrt(summary(glm_fit)$cov.unscaled)
+    scr_ci_method = "Maximum likelihood SE"
+    glm_err_warn_msg <- NA
+    cat("\n   -------------------------------",
+        "\n   GLM model fit",
+        "\n   -------------------------------")
+    print(summary(glm_fit))
+    
+    # if variance=="robust"
+    # adjust the SEs using A clustered, Huber-White robust variance.
+    if(variance == "robust") {
+      glm_fit_rb <- coeftest(glm_fit,vcov. = vcovCL(glm_fit,cluster=df$id))
+      logscr_se <- glm_fit_rb[1,2]
+      scr_ci_method = "Robust, Huber-White SE"
+      cat("\n   -------------------------------",
+          "\n   GLM model fit, with Robust, SEs",
+          "\n   -------------------------------")
+      print(glm_fit_rb)
+    } 
+  }
+  
+  # estimate the 95% CIs
+  scr_min95 = exp(log(scr_hat) - 1.96*logscr_se)
+  scr_max95 = exp(log(scr_hat) + 1.96*logscr_se)
+  
+  # if variance = "bootstrap"
+  # resample the ID variable with replacement and re-estimate the SCR
+  if(variance=="bootstrap") {
+    
+    cat(paste0("\n\nFitting a catalytic model (SIR) using GLM\n with inference using a nonparametric bootstrap (",nboots," iterations)\n"))
+    
+    bsamp <- matrix(sample(ids,size=length(ids)*nboots,replace=TRUE),
+                    nrow=length(ids),ncol=nboots)
+    
+    bootests <- foreach(brep=1:nboots,.combine=rbind) %do% {
+      if(brep %% 50 == 0) {
+        cat(".",brep,"\n")
+      }else{
+        cat(".")
+      }
+    
+      di <- df %>%
+        left_join(data.frame(id=bsamp[,brep]),di,by=c("id"), relationship = "many-to-many") 
+      
+      # fit the GLM model
+      glm_fiti <- tryCatch(glm(serop~1, offset = log(agey),
+                              data = di,
+                              family = binomial(link = "cloglog")),
+                          error = function(cond){return(cond$message)},
+                          warning = function(cond){return(cond$message)})
+      
+      if(class(glm_fiti)[1] == "character") {
+        scr_hati <- NA
+      } else {
+        scr_hati <- exp(glm_fiti$coefficients)
+      }
+      res <- data.frame(brep,scr_hati)
+      return(res)
+    }
+    # from bootstrap, estimate the 95% CI
+    logscr_se <- NA
+    scr_min95 <- quantile(bootests$scr_hati,prob=0.025)
+    scr_max95 <- quantile(bootests$scr_hati,prob=0.975)
+    scr_ci_method <- paste0("Bootstrap (",nboots," reps)")
+    
+  }
+  
+  cat("\n\n-----------------------------------------------\n",
+      "GLM model fit of the seroconversion rate (SCR)\n",
+      "SCR units are seroconversions per child-year \n",
+      "----------------------------------------------\n",
+      "Non-missing observations:   ", nrow(df),"\n",
+      "Number of independent units:",length(ids),"\n",
+      "95% CI estimated using", scr_ci_method,"\n",
+      "Estimates:\n",
+      "SCR estimate:", sprintf("%1.4f",scr_hat),"\n",
+      "SCR min 95  :", sprintf("%1.4f",scr_min95),"\n",
+      "SCR max 95  :", sprintf("%1.4f",scr_max95),"\n",
+      "----------------------------------------------\n")
+  
+  return(list(scr=scr_hat,logscr_se=logscr_se,scr_min95=scr_min95,scr_max95=scr_max95,scr_ci_method=scr_ci_method,glm_err_warn_msg=glm_err_warn_msg))
+  
+}
+
+
+```
+
+```{r estimate SCR for Ecuador}
+#-------------------------------
+# limit the analysis to
+# measurements in ages 1-5 year olds
+# and non-missing Pgp3 outcomes
+#-------------------------------
+d2 <- d %>%
+  filter(age_years >= 1 & age_years <= 5) %>%
+  filter(!is.na(seropos))
+
+#-------------------------------
+# estimate the SCR
+#-------------------------------
+ecuador_scr_fit <- estimate_scr_glm(serop = d2$seropos, agey=d2$age_years, id=d2$childid, variance = "robust")
+
+#-------------------------------
+# estimate the SCR, stratified
+# by urbanicity
+#-------------------------------
+d2_urban <- d2 %>% filter(community_type == "Borbon")
+d2_rural <- d2 %>% filter(community_type == "Rural Villages")
+
+scr_urban <- estimate_scr_glm(serop = d2_urban$seropos, agey=d2_urban$age_years, id=d2_urban$childid, variance = "robust")
+
+scr_rural <- estimate_scr_glm(serop = d2_rural$seropos, agey=d2_rural$age_years, id=d2_rural$childid, variance = "robust")
+
+```
+
+## Estimate posterior probability Ecuador is in each category
+
+Estimate posterior distributions conditional on the EU being in each of the trachoma action categories.  Since the survey could be considered a baseline survey (not necessarily post-elimination), use an uninformative (P=0.5) prior following Kamau et al. 2025.
+
+
+```{r Ecuador SCR ests}
+#-----------------------------------------
+# simulate from the estimates of the log(SCR)
+# and its standard error, drawing 10000
+# realizations of the distribution assuming
+# it is normally distributed on the log scale
+# 
+# create a density of the SCR distribution
+# for each of the populations along the
+# urban-rural gradient
+#-----------------------------------------
+
+# overall (not used / focus on stratified)
+# set.seed(1097235)
+# ecuador_scr_sim <- sim_log_scr(logscr = log(ecuador_scr_fit$scr), logscr_se = ecuador_scr_fit$logscr_se, nsims=10000)
+# dist_ecuador <- density(ecuador_scr_sim, n=1024, from=0, to=30)
+# den_ecuador <- data.frame(scr=dist_ecuador$x, eu_den = dist_ecuador$y)
+
+#-----------------------------------------
+# function to simulate from the estimated
+# log(SCR) and its SE 
+# function returns the SCR per 100 person-years
+#-----------------------------------------
+sim_log_scr <- function(logscr, logscr_se, nsims=1000) {
+  simscr <- rnorm(n=nsims, mean=logscr, sd = logscr_se)
+  return(exp(simscr)*100)
+}
+
+
+set.seed(2342)
+scr_sim_urban <- sim_log_scr(logscr = log(scr_urban$scr), logscr_se = scr_urban$logscr_se, nsims=10000)
+dist_urban <- density(scr_sim_urban, n=1024, from=0, to=30)
+den_urban <- data.frame(eu_name = "Borbon", scr=dist_urban$x, eu_den = dist_urban$y)
+
+scr_sim_rural <- sim_log_scr(logscr = log(scr_rural$scr), logscr_se = scr_rural$logscr_se, nsims=10000)
+dist_rural <- density(scr_sim_rural, n=1024, from=0, to=30)
+den_rural <- data.frame(eu_name = "Rural Villages", scr=dist_rural$x, eu_den = dist_rural$y)
+
+den_ecuador <- bind_rows(den_urban,den_rural) %>%
+  mutate(eu_name =factor(eu_name, levels = levels(d2$community_type)))
+
+#-----------------------------------------
+# join the EU data to the pooled densities
+#
+# multiply the EU density (likelihood) by
+# the pooled density (prior) for each trachoma category.
+# to get the posterior density conditional
+# on being in each category
+#-----------------------------------------
+prob_eu <- left_join(den_ecuador, d_prob1 %>% rename(pool_den = den), join_by(scr), relationship = "many-to-many") %>%
+  mutate(post_den = eu_den*pool_den) %>%
+  # normalize all of the densities so they sum to 1
+  group_by(eu_name,trachoma_cat) %>%
+  arrange(eu_name,trachoma_cat, scr) %>%
+  mutate(sum_eu_den = sum(eu_den),
+         sum_pool_den = sum(pool_den),
+         sum_post_den = sum(post_den),
+         eu_den = eu_den/sum_eu_den,
+         pool_den = pool_den/sum_pool_den,
+         post_den = post_den/sum_post_den) %>%
+  select(-sum_eu_den,-sum_pool_den,-sum_post_den)
+
+
+plot_scr_dens <- ggplot(data=prob_eu, aes(x=scr, y=pool_den, fill=eu_name, linetype = trachoma_cat)) +
+  
+  
+  # geom_line(aes(y=eu_den), color="gray20",lwd=0.5) + 
+  geom_polygon(aes(x=scr,y=eu_den),color=NA,alpha=0.7) +
+  geom_line(lwd=0.75) +
+  annotate("text",x=5,y=0.024, label="Action not needed",size=3.5) +
+  annotate("text",x=14,y=0.003, label="Action needed",size=3.5) +
+  # scale_color_manual(values=pcols[1:3]) +
+  scale_fill_manual(values=cbpal[c(4,2)]) +
+  scale_x_continuous(breaks=seq(0,22,by=2)) +
+  labs(x="SCR per 100 person-years",y="P(SCR | trachoma category)") +
+       #   title="Probability distributions of trachoma categories",
+       # subtitle="Heavy black lines are SCR likelihoods for Ecuador"
+  guides(fill = guide_legend(title=""), linetype = "none") +
+  coord_cartesian(xlim=c(0,22)) +
+  theme_classic() + 
+  theme(
+    legend.position = c(0.8,0.8), 
+    axis.text.y = element_blank()
+  )
+
+plot_scr_dens
+
+```
+
+Multiply the Ecuador likelihood by the probability of each trachoma category across the range of the SCR. 
+
+Then sum across SCR values to get the probability that the EU is in each category.
+
+This effectively multiplies the curves in Fig 2, with each EU's likelihood. 
+
+For example, with two categories ($A$,$B$), for category $A$, it would be: $\frac{P(\theta)P(A)}{P(\theta)P(A) + P(\theta)P(B)}$. 
+
+Below are estimates with uninformative prior (0.5 in each category)
+
+```{r prob of no action needed}
+prob_noaction <- prob_eu %>%
+  mutate(eu_den_prob= eu_den * prob_post) %>%
+  group_by(eu_name,trachoma_cat) %>%
+  summarize(prob_uninform = sum(eu_den_prob)) %>%
+  pivot_wider(id_cols=eu_name, names_from = trachoma_cat, values_from = prob_uninform)
+
+kbl(prob_noaction, digits=3, caption = "Probability of trachoma public health action based on estimated SCR along the urban-rural gradient, Esmeraldas, Ecuador", col.names=c("Population","Action needed","Action not needed")) %>% kable_styling(bootstrap_options = "striped")
+
+```
+
+Estimates reasonable given the above plot of the likelihoods and the prior distributions for each category.
+
+
+## Estimate P(SCR ≤ x) for Ecuador
+
+Typically, we are interested in P(SCR ≤ x) as a measure of confidence for no action needed.  This is the quantity demonstrated in Kamau et al 2025 Figure 5B and 5C.   
+
+Will choose example x from above, say 2. Given the likelihoods above, we can see that there is no probability density below an SCR of 2 in rural villages.  
+
+```{r estimate EU threshold probabilities}
+#-----------------------------------------
+# sum the density below a threshold
+# use SCR = 2 as an example threshold
+#-----------------------------------------
+ec_threshold_probs <- prob_eu %>%
+  # calculate the cumulative distribution function
+  # and interpolate it at the elimination threshold (2)
+  # sort in ascending order of SCR to sum probabilities from the left hand side
+  arrange(eu_name,scr) %>%
+  group_by(eu_name, trachoma_cat) %>%
+  mutate(eu_cum_prob = cumsum(eu_den),
+         eu_thresh_prob = approx(x=scr,y=eu_cum_prob, xout=2)$y) %>%
+  slice(1) %>%
+  select(eu_name,trachoma_cat, eu_thresh_prob) %>%
+  filter(trachoma_cat == "Action not needed")
+
+kbl(ec_threshold_probs)
+
+
+#-----------------------------------------
+# sum the density above a threshold
+# use SCR = 4 as an example threshold
+#-----------------------------------------
+ec_threshold_probs2 <- prob_eu %>%
+  # calculate the cumulative distribution function
+  # and interpolate it at the action needed threshold (4)
+  # sort in descending order of SCR to sum probabilities from the right hand side
+  arrange(eu_name,desc(scr)) %>%
+  group_by(eu_name, trachoma_cat) %>%
+  mutate(eu_cum_prob = cumsum(eu_den),
+         eu_thresh_prob = approx(x=scr,y=eu_cum_prob, xout=4)$y) %>%
+  slice(1) %>%
+  select(eu_name,trachoma_cat, eu_thresh_prob) %>%
+  filter(trachoma_cat == "Action needed")
+
+kbl(ec_threshold_probs2)
+
+# plot_eu_threshold_probs <- ggplot(data=ec_threshold_probs %>% filter(eu_thresh_prob>0.001), aes(x=eu_name, y = eu_thresh_prob)) +
+#   geom_bar(stat="identity", fill="cadetblue", color=NA, width = 0.5) +
+#   # geom_text(aes(label = sprintf("%1.2f",eu_thresh_prob)), position = position_nudge(y=0.07)) +
+#   scale_y_continuous(breaks = seq(0,1,by=0.2)) + 
+#   labs(y="Probability SCR ≤ 1.2", x="") +
+#   coord_flip() +
+#   theme_minimal() +
+#   theme(
+#     axis.text.y = element_blank(),
+#     panel.grid.minor.x = element_blank()
+#   )
+#   
+```
+Below is the posterior probability distributions of the SCR vis-a-vis the thresholds of 2 and 4 per 100 person-years. 
+
+```{r plot eu density and threshold probs}
+
+#-----------------------------------------
+# get the posterior distributions for 
+# held out EUs and limit them to those that
+# are not clearly endemic
+# (for something comparable to current ms Fig 4)
+#-----------------------------------------
+
+sims_urban <- data.frame(scr = scr_sim_urban, eu_name = "Borbon")
+sims_rural <- data.frame(scr = scr_sim_rural, eu_name = "Rural Villages")
+ecuador_scr_sim <- bind_rows(sims_urban,sims_rural) 
+
+plot_eu_den <- ggplot(data=ecuador_scr_sim) +
+  
+  geom_density_ridges(aes(x=scr, y=eu_name, group = eu_name,fill=eu_name), rel_min_height = 0.01, scale = 1, alpha = 0.9, color="gray20") +
+  scale_fill_manual(values = cbpal[c(2,4)]) + 
+  # geom_density(aes(x=scr), fill="black",alpha=0.1) +
+  geom_vline(xintercept = 2, linetype = "dashed", lwd=0.7, color="gray40") +
+  geom_vline(xintercept = 4, linetype = "dashed", lwd=0.7, color="gray40") +
+  scale_x_continuous(breaks=seq(0,10,by=1)) + 
+  labs(y="P(SCR | location)",x="SCR per 100 person-years") +
+  coord_cartesian(xlim=c(0,10)) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    panel.grid.minor.x= element_blank()
+  )
+
+plot_eu_den
+```
+
+## Combined figure
+
+```{r create a combined figure and save output}
+
+combined_density_figure <- plot_scr_dens + plot_eu_den + 
+  plot_annotation(tag_level = "A", theme=theme(plot.tag = element_text(face="bold")))
+combined_density_figure
+
+ggsave(filename = here("output","ecomid_scr_densitities.png"),plot = combined_density_figure, device="png",width=220, height=90, units="mm")
+```
+
+# Session Info
+```{r session info}
+sessionInfo()
+```
+
