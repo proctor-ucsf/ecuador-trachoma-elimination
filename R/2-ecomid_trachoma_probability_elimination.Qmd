@@ -404,7 +404,7 @@ plot_seroprev_community <- ggplot(data = dprev_comm_plot, aes(x = community_name
   scale_color_manual(values = cbpal[c(4,2)]) +
   scale_y_continuous(breaks = seq(0,0.5,by=0.1), labels = sprintf("%1.0f",seq(0,0.5,by=0.1)*100)) +
   # scale_x_continuous(breaks = seq(0,16,by=2)) + 
-  labs(x = "Community", y = "Pgp3 IgG Seroprevalence (%)", tag = "A") +
+  labs(x = "Community", y = "Pgp3 IgG Seroprevalence (%)", tag = "C") +
   coord_cartesian(ylim=c(0,0.5)) + 
   theme_classic() + 
   theme(
@@ -443,7 +443,7 @@ plot_seroprev_age <- ggplot(data = dprev, aes(x = agey, y = seroprev)) +
   geom_errorbar(aes(ymin= seroprev_min95, ymax = seroprev_max95),color="deepskyblue4", width = 0.2) +
   scale_y_continuous(breaks = seq(0,0.3,by=0.1), labels = sprintf("%1.0f",seq(0,0.3,by=0.1)*100)) +
   scale_x_continuous(breaks = seq(0,16,by=2)) + 
-  labs(x = "Age, years", y = "Pgp3 IgG Seroprevalence (%)", tag = "A") +
+  labs(x = "Age, years", y = "Pgp3 IgG Seroprevalence (%)", tag = "B") +
   coord_cartesian(ylim=c(0,0.3)) + 
   theme_classic()
 
@@ -514,7 +514,7 @@ plot_hist_age <- ggplot(data = d, aes(x = agey, fill = community_type)) +
   scale_color_manual(values = cbpal[c(4,2)], guide = guide_legend(title = "")) +
   scale_x_continuous(breaks = seq(0,16,by=2)) +
   coord_cartesian(xlim=c(0,15)) + 
-  labs(x="Age, years",y = "N samples", tag="C") +
+  labs(x="Age, years",y = "N samples", tag="A") +
   theme_classic() +
   theme(
     legend.position = c(0.7,0.9)
@@ -525,9 +525,20 @@ plot_hist_age
 ```
 
 ```{r composite age seroprev plot}
-age_seroprev_comp <- plot_seroprev_community  + plot_smooth_prev + plot_hist_age + plot_layout(ncol = 1, heights=c(1,1,1))
+age_seroprev_comp <- plot_hist_age + plot_smooth_prev + plot_seroprev_community   + plot_layout(ncol = 1, heights=c(1,1,1))
 
-ggsave(filename = here("output","ecuador_pgp3_age_serprev.png"),age_seroprev_comp, device = "png", width = 90, height = 240, units = "mm")
+# ggsave(filename = here("output","ecuador_pgp3_age_serprev.png"),age_seroprev_comp, device = "png", width = 90, height = 240, units = "mm",dpi=300)
+
+# EID format, 300dpi at 5 inches wide TIF, or PDF. Use PDF to keep scaling.
+ggsave(
+  filename = here("output","ecuador_pgp3_age_serprev.pdf"),
+  plot=age_seroprev_comp,
+  device = "pdf",
+  width = 90,
+  height = 240,
+  units = "mm"
+)
+
 ```
 
 
@@ -920,7 +931,7 @@ plot_eu_den <- ggplot(data=ecuador_scr_sim) +
   geom_vline(xintercept = 4, linetype = "dashed", lwd=0.7, color="gray40") +
   scale_x_continuous(breaks=seq(0,10,by=1)) + 
   labs(y="P(SCR | location)",x="SCR per 100 person-years") +
-  coord_cartesian(xlim=c(0,10)) +
+  coord_cartesian(xlim=c(0,10),ylim=c(1,2.45)) +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -938,7 +949,17 @@ combined_density_figure <- plot_scr_dens + plot_eu_den +
   plot_annotation(tag_level = "A", theme=theme(plot.tag = element_text(face="bold")))
 combined_density_figure
 
-ggsave(filename = here("output","ecomid_scr_densitities.png"),plot = combined_density_figure, device="png",width=220, height=90, units="mm")
+# ggsave(filename = here("output","ecomid_scr_densitities.png"),plot = combined_density_figure, device="png",width=220, height=90, units="mm",dpi=300)
+
+# EID requirements, 300dpi at 5 inches wide, TIF format, or PDF
+ggsave(
+  filename = here("output", "ecomid_scr_densities.pdf"),
+  plot = combined_density_figure,
+  device = "pdf",
+  width = 220,
+  height = 90,
+  units = "mm"
+)
 ```
 
 # Session Info
