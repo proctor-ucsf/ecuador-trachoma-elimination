@@ -345,7 +345,7 @@ Below, we stratify the analysis by Borbon (commercial center, somewhat urban), a
 #
 # data are in long format
 #-------------------------------
-d <- read_rds(here("data","ecuador_trachoma_elimination_data.rds"))
+d <- read_rds(here("data","ecuador_trachoma_elimination_data_2026-09-14.rds"))
   
 # Identify the number of children and samples in Esmeraldas
 # to report exclusion
@@ -355,9 +355,11 @@ d_nchild_by_community <- d %>%
 table(d_nchild_by_community$community_name)
 
 # Filter out Esmeraldas city
+# add "ó" to Borbón
 d <- d %>%
   filter(community_name != "Esmeraldas") %>%
-  mutate(community_type = factor(community_type, levels = c("Rural Villages","Esmeraldas and Borbon"),labels = c("Rural Villages","Borbon")))
+  mutate(community_name = ifelse(community_name == "Borbon","Borbón",community_name)) %>%
+  mutate(community_type = factor(community_type, levels = c("Rural Villages","Esmeraldas and Borbon"),labels = c("Rural Villages","Borbón")))
 
 table(d$community_type)
 ```
@@ -391,11 +393,11 @@ kbl(dprev_comm %>% arrange(seroprev),caption = "Seroprevalence by community (age
 # sort communities by prevalence
 #-------------------------------
 comm_sorted <- dprev_comm$community_name[order(dprev_comm$seroprev)]
-rural_comm_sorted <- comm_sorted[comm_sorted!="Borbon"]
+rural_comm_sorted <- comm_sorted[comm_sorted!="Borbón"]
 dprev_comm_plot <- dprev_comm %>%
-  mutate(community_name_plot = factor(community_name, levels = c("Borbon",rural_comm_sorted)),
-         community_type = ifelse(community_name == "Borbon","Borbon","Rural villages"),
-         community_type = factor(community_type, levels = c("Rural villages","Borbon"))
+  mutate(community_name_plot = factor(community_name, levels = c("Borbón",rural_comm_sorted)),
+         community_type = ifelse(community_name == "Borbón","Borbón","Rural villages"),
+         community_type = factor(community_type, levels = c("Rural villages","Borbón"))
          )
          
 plot_seroprev_community <- ggplot(data = dprev_comm_plot, aes(x = community_name_plot, y = seroprev, color = community_type)) +
@@ -468,7 +470,7 @@ cat("Total number of Pgp3 measurements ages 1-5:",length(d$seropos[!is.na(d$sero
 # fit loess to smooth over age
 # stratify fits by community
 #-------------------------------
-d_urban <- d %>% filter(community_type == "Borbon")
+d_urban <- d %>% filter(community_type == "Borbón")
 d_rural <- d %>% filter(community_type == "Rural Villages")
 fit_urban <- loess(seropos ~ age_years, data=d_urban)
 fit_rural <- loess(seropos ~ age_years, data=d_rural)
@@ -476,7 +478,7 @@ fit_rural <- loess(seropos ~ age_years, data=d_rural)
 pred_ages <- seq(1,14,by=0.1)
 p_loess_urban <- predict(fit_urban, newdata = data.frame(age_years = pred_ages))
 p_loess_rural <- predict(fit_rural, newdata = data.frame(age_years = pred_ages))
-d_loess_fits <- data.frame(community_type = c(rep("Borbon",length(pred_ages)),rep("Rural Villages",length(pred_ages))),
+d_loess_fits <- data.frame(community_type = c(rep("Borbón",length(pred_ages)),rep("Rural Villages",length(pred_ages))),
                            age_years = c(pred_ages,pred_ages),
                            pred_seroprev = c(p_loess_urban,p_loess_rural)) %>%
   mutate(community_type = factor(community_type, levels = levels(d$community_type)))
@@ -723,7 +725,7 @@ ecuador_scr_fit <- estimate_scr_glm(serop = d2$seropos, agey=d2$age_years, id=d2
 # estimate the SCR, stratified
 # by urbanicity
 #-------------------------------
-d2_urban <- d2 %>% filter(community_type == "Borbon")
+d2_urban <- d2 %>% filter(community_type == "Borbón")
 d2_rural <- d2 %>% filter(community_type == "Rural Villages")
 
 scr_urban <- estimate_scr_glm(serop = d2_urban$seropos, agey=d2_urban$age_years, id=d2_urban$childid, variance = "robust")
@@ -769,7 +771,7 @@ sim_log_scr <- function(logscr, logscr_se, nsims=1000) {
 set.seed(2342)
 scr_sim_urban <- sim_log_scr(logscr = log(scr_urban$scr), logscr_se = scr_urban$logscr_se, nsims=10000)
 dist_urban <- density(scr_sim_urban, n=1024, from=0, to=30)
-den_urban <- data.frame(eu_name = "Borbon", scr=dist_urban$x, eu_den = dist_urban$y)
+den_urban <- data.frame(eu_name = "Borbón", scr=dist_urban$x, eu_den = dist_urban$y)
 
 scr_sim_rural <- sim_log_scr(logscr = log(scr_rural$scr), logscr_se = scr_rural$logscr_se, nsims=10000)
 dist_rural <- density(scr_sim_rural, n=1024, from=0, to=30)
@@ -811,15 +813,15 @@ plot_scr_dens <- ggplot(data=prob_eu, aes(x=scr, y=pool_den, fill=eu_name, linet
   # scale_color_manual(values=pcols[1:3]) +
   scale_fill_manual(values=cbpal[c(4,2)]) +
   scale_x_continuous(breaks=seq(0,22,by=2)) +
-  labs(x="SCR per 100 person-years",y="P(SCR | trachoma category)") +
+  labs(x="SCR per 100 person-years",y="Probability density") +
        #   title="Probability distributions of trachoma categories",
        # subtitle="Heavy black lines are SCR likelihoods for Ecuador"
-  guides(fill = guide_legend(title=""), linetype = "none") +
+  guides(fill = guide_legend(title="",override.aes = list(alpha = 1)), linetype = "none") +
   coord_cartesian(xlim=c(0,22)) +
   theme_classic() + 
   theme(
-    legend.position = c(0.8,0.8), 
-    axis.text.y = element_blank()
+    legend.position = c(0.8,0.8)
+    # axis.text.y = element_blank()
   )
 
 plot_scr_dens
@@ -918,7 +920,7 @@ Below is the posterior probability distributions of the SCR vis-a-vis the thresh
 # (for something comparable to current ms Fig 4)
 #-----------------------------------------
 
-sims_urban <- data.frame(scr = scr_sim_urban, eu_name = "Borbon")
+sims_urban <- data.frame(scr = scr_sim_urban, eu_name = "Borbón")
 sims_rural <- data.frame(scr = scr_sim_rural, eu_name = "Rural Villages")
 ecuador_scr_sim <- bind_rows(sims_urban,sims_rural) 
 
@@ -927,15 +929,19 @@ plot_eu_den <- ggplot(data=ecuador_scr_sim) +
   geom_density_ridges(aes(x=scr, y=eu_name, group = eu_name,fill=eu_name), rel_min_height = 0.01, scale = 1, alpha = 0.9, color="gray20") +
   scale_fill_manual(values = cbpal[c(2,4)]) + 
   # geom_density(aes(x=scr), fill="black",alpha=0.1) +
+  # annotate("text",x=8.2,y=2.7,label="Rural Villages",color=cbpal[4]) +
+  # annotate("text",x=1,y=2.1,label="Borbón",color=cbpal[2]) + 
   geom_vline(xintercept = 2, linetype = "dashed", lwd=0.7, color="gray40") +
   geom_vline(xintercept = 4, linetype = "dashed", lwd=0.7, color="gray40") +
-  scale_x_continuous(breaks=seq(0,10,by=1)) + 
-  labs(y="P(SCR | location)",x="SCR per 100 person-years") +
+  scale_x_continuous(breaks=seq(0,10,by=1)) +
+  labs(y="",x="SCR per 100 person-years") +
   coord_cartesian(xlim=c(0,10),ylim=c(1,2.45)) +
   theme_classic() +
   theme(
     legend.position = "none",
-    panel.grid.minor.x= element_blank()
+    panel.grid.minor.x= element_blank(),
+    # axis.ticks.y = element_blank(),
+    # axis.text.y = element_blank()
   )
 
 plot_eu_den
