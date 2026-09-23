@@ -35,7 +35,7 @@ source(here("R","0-config.R"))
 #
 # data are in long format
 #-------------------------------
-d <- read_rds(here("../../data/serology/final/ecomid_serology_datasets","ecomid_sero_antigen_seropos_long_2025-12-18.rds"))
+d <- read_rds(here("../../data/serology/final/ecomid_serology_datasets","ecomid_sero_antigen_seropos_long_2026-08-26.rds"))
 
 # restrict to Pgp3
 d2 <- d %>%
@@ -46,7 +46,7 @@ d2 <- d %>%
 # load child visit data for
 # exact dates at age of DBS collection
 #-------------------------------
-dvisit <- read_rds(file=here("../../data/ecomid-field/final","ecomid_child_visit_info_2025-09-10.rds"))
+dvisit <- read_rds(file=here("../../data/ecomid-field/final","ecomid_child_visit_info_2026-06-15.rds"))
 
 #-------------------------------
 # join visit ages to serology
@@ -84,7 +84,7 @@ d3 <- d2 %>%
 #
 # data are in long format
 #-------------------------------
-den <- read_rds(here("../../data/serology/final/dengue_serology_datasets","dengue_sero_antigen_seropos_long_2025-12-18.rds"))
+den <- read_rds(here("../../data/serology/final/dengue_serology_datasets","dengue_sero_antigen_seropos_long_2026-08-26.rds"))
 
 # restrict to pgp3
 # rename age variable to be consistent with ECoMiD
@@ -139,8 +139,8 @@ skim(d5)
 
 # Save analysis data
 ```{r save analysis data}
-write_rds(d5, file = here("data","ecuador_trachoma_elimination_data.rds"))
-write_csv(d5, file = here("data","ecuador_trachoma_elimination_data.csv"))
+write_rds(d5, file = here("data","ecuador_trachoma_elimination_data_2026-09-14.rds"))
+write_csv(d5, file = here("data","ecuador_trachoma_elimination_data_2026-09-14.csv"))
 ```
 
 # Session Info
